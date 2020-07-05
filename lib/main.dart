@@ -1,109 +1,219 @@
-import 'package:flutter/material.dart';
-import 'package:jitsi_meet/jitsi_meet.dart';
+import 'dart:async';
 
-void main() {
-  runApp(MyApp());
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:flutter/material.dart';
+
+void main() => runApp(MyApp());
+
+class MyApp extends StatefulWidget {
+  @override
+  _MyAppState createState() => _MyAppState();
 }
 
-class MyApp extends StatelessWidget {
-  // This widget is the root of your application.
+class _MyAppState extends State<MyApp> {
+  bool _isInChannel = false;
+  final _infoStrings = <String>[];
+
+  static final _sessions = List<VideoSession>();
+  String dropdownValue = 'Off';
+
+  final List<String> voices = [
+    'Off',
+    'Oldman',
+    'BabyBoy',
+    'BabyGirl',
+    'Zhubajie',
+    'Ethereal',
+    'Hulk'
+  ];
+
+  /// remote user list
+  final _remoteUsers = List<int>();
+
+  @override
+  void initState() {
+    super.initState();
+
+    _initAgoraRtcEngine();
+    _addAgoraEventHandlers();
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        // This makes the visual density adapt to the platform that you run
-        // the app on. For desktop platforms, the controls will be smaller and
-        // closer together (more dense) than on mobile platforms.
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('Agora Flutter SDK'),
+        ),
+        body: Container(
+          child: Column(
+            children: [
+              Container(height: 320, child: _viewRows()),
+              OutlineButton(
+                child: Text(_isInChannel ? 'Leave Channel' : 'Join Channel',
+                    style: textStyle),
+                onPressed: _toggleChannel,
+              ),
+              Container(height: 100, child: _voiceDropdown()),
+              Expanded(child: Container(child: _buildInfoList())),
+            ],
+          ),
+        ),
       ),
-      home: MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
-}
 
-class MyHomePage extends StatefulWidget {
-  MyHomePage({Key key, this.title}) : super(key: key);
+  Widget _voiceDropdown() {
+    return Scaffold(
+      body: Center(
+        child: DropdownButton<String>(
+          value: dropdownValue,
+          onChanged: (String newValue) {
+            setState(() {
+              dropdownValue = newValue;
+              VoiceChanger voice =
+                  VoiceChanger.values[(voices.indexOf(dropdownValue))];
+              AgoraRtcEngine.setLocalVoiceChanger(voice);
+            });
+          },
+          items: voices.map<DropdownMenuItem<String>>((String value) {
+            return DropdownMenuItem<String>(
+              value: value,
+              child: Text(value),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
+  Future<void> _initAgoraRtcEngine() async {
+    AgoraRtcEngine.create('YOUR APP ID');
 
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
+    AgoraRtcEngine.enableVideo();
+    AgoraRtcEngine.enableAudio();
+    // AgoraRtcEngine.setParameters('{\"che.video.lowBitRateStreamParameter\":{\"width\":320,\"height\":180,\"frameRate\":15,\"bitRate\":140}}');
+    AgoraRtcEngine.setChannelProfile(ChannelProfile.Communication);
 
-  final String title;
+    VideoEncoderConfiguration config = VideoEncoderConfiguration();
+    config.orientationMode = VideoOutputOrientationMode.FixedPortrait;
+    AgoraRtcEngine.setVideoEncoderConfiguration(config);
+  }
 
-  @override
-  _MyHomePageState createState() => _MyHomePageState();
-}
+  void _addAgoraEventHandlers() {
+    AgoraRtcEngine.onJoinChannelSuccess =
+        (String channel, int uid, int elapsed) {
+      setState(() {
+        String info = 'onJoinChannel: ' + channel + ', uid: ' + uid.toString();
+        _infoStrings.add(info);
+      });
+    };
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+    AgoraRtcEngine.onLeaveChannel = () {
+      setState(() {
+        _infoStrings.add('onLeaveChannel');
+        _remoteUsers.clear();
+      });
+    };
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+    AgoraRtcEngine.onUserJoined = (int uid, int elapsed) {
+      setState(() {
+        String info = 'userJoined: ' + uid.toString();
+        _infoStrings.add(info);
+        _remoteUsers.add(uid);
+      });
+    };
+
+    AgoraRtcEngine.onUserOffline = (int uid, int reason) {
+      setState(() {
+        String info = 'userOffline: ' + uid.toString();
+        _infoStrings.add(info);
+        _remoteUsers.remove(uid);
+      });
+    };
+
+    AgoraRtcEngine.onFirstRemoteVideoFrame =
+        (int uid, int width, int height, int elapsed) {
+      setState(() {
+        String info = 'firstRemoteVideo: ' +
+            uid.toString() +
+            ' ' +
+            width.toString() +
+            'x' +
+            height.toString();
+        _infoStrings.add(info);
+      });
+    };
+  }
+
+  void _toggleChannel() {
+    setState(() async {
+      if (_isInChannel) {
+        _isInChannel = false;
+        await AgoraRtcEngine.leaveChannel();
+        await AgoraRtcEngine.stopPreview();
+      } else {
+        _isInChannel = true;
+        await AgoraRtcEngine.startPreview();
+        await AgoraRtcEngine.joinChannel(null, 'flutter', null, 0);
+      }
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              'You have pushed the button this many times:',
+  Widget _viewRows() {
+    return Row(
+      children: <Widget>[
+        for (final widget in _renderWidget)
+          Expanded(
+            child: Container(
+              child: widget,
             ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+          )
+      ],
     );
+  }
+
+  Iterable<Widget> get _renderWidget sync* {
+    yield AgoraRenderWidget(0, local: true, preview: false);
+
+    for (final uid in _remoteUsers) {
+      yield AgoraRenderWidget(uid);
+    }
+  }
+
+  VideoSession _getVideoSession(int uid) {
+    return _sessions.firstWhere((session) {
+      return session.uid == uid;
+    });
+  }
+
+  List<Widget> _getRenderViews() {
+    return _sessions.map((session) => session.view).toList();
+  }
+
+  static TextStyle textStyle = TextStyle(fontSize: 18, color: Colors.blue);
+
+  Widget _buildInfoList() {
+    return ListView.builder(
+      padding: const EdgeInsets.all(8.0),
+      itemExtent: 24,
+      itemBuilder: (context, i) {
+        return ListTile(
+          title: Text(_infoStrings[i]),
+        );
+      },
+      itemCount: _infoStrings.length,
+    );
+  }
+}
+
+class VideoSession {
+  int uid;
+  Widget view;
+  int viewId;
+
+  VideoSession(int uid, Widget view) {
+    this.uid = uid;
+    this.view = view;
   }
 }
